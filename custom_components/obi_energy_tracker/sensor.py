@@ -1,8 +1,8 @@
 """Sensor platform for Obi EnergyTracker."""
-
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -37,7 +37,10 @@ async def async_setup_entry(
     async_add_entities(sensors)
 
 
-class ObiEnergySensorBase(CoordinatorEntity[ObiEnergyTrackerCoordinator], SensorEntity):
+class ObiEnergySensorBase(
+    CoordinatorEntity[ObiEnergyTrackerCoordinator],
+    SensorEntity,
+):
     """Base class for Obi EnergyTracker sensors."""
 
     _attr_has_entity_name = True
@@ -45,21 +48,45 @@ class ObiEnergySensorBase(CoordinatorEntity[ObiEnergyTrackerCoordinator], Sensor
     def __init__(self, coordinator: ObiEnergyTrackerCoordinator) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
+
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "obi_energy_tracker")},
             "name": "Obi EnergyTracker",
             "manufacturer": "Obi",
         }
 
+    def _get_latest_meter_value(self) -> float | None:
+        """Return latest meter value from current payload."""
+        if not self.coordinator.data:
+            return None
+
+        meter_data = self.coordinator.data.get("meter")
+
+        if not meter_data or not isinstance(meter_data, list):
+            return None
+
+        for item in reversed(meter_data):
+            if not isinstance(item, dict):
+                continue
+
+            if "value" in item:
+                try:
+                    return float(item["value"])
+                except (TypeError, ValueError):
+                    continue
+
+        return None
+
 
 class ObiMeterReadingSensor(ObiEnergySensorBase):
-    """Sensor for total meter reading (Zählerstand)."""
+    """Sensor for meter reading."""
 
-    _attr_unique_id = "obi_meter_reading"
+    _attr_name = "Meter Reading"
+    _attr_unique_id = "obi_energytracker_meter_reading"
+    _attr_native_unit_of_measurement = "Wh"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
-    _attr_translation_key = "meter_reading"
-    _attr_native_unit_of_measurement = "Wh"
+    _attr_icon = "mdi:lightning-bolt"
 
     @property
     def native_value(self) -> float | None:
@@ -68,27 +95,36 @@ class ObiMeterReadingSensor(ObiEnergySensorBase):
             "ObiMeterReadingSensor native_value called. Data: %s",
             self.coordinator.data,
         )
-        if (
-            self.coordinator.data
-            and "meter" in self.coordinator.data
-            and self.coordinator.data["meter"]
-        ):
-            meter_data = self.coordinator.data["meter"]
 
-            # If it's a list, get the latest record
-            if isinstance(meter_data, list) and len(meter_data) > 0:
-                meter_data = meter_data[-1]
+        current_value = self._get_latest_meter_value()
 
-            if not isinstance(meter_data, dict):
-                return None
+        if current_value is not None:
+            return current_value
 
-            # Look for "value" (if measure is energy) or "energy" directly
-            if "energy" in meter_data:
-                return meter_data["energy"]
-            if "value" in meter_data and meter_data.get("measure") == "energy":
-                return meter_data["value"]
-            # Fallback to "value" if present
-            if "value" in meter_data:
-                return meter_data["value"]
+        if self.coordinator.data:
+            last_value = self.coordinator.data.get("last_meter_value")
+
+            if last_value is not None:
+                _LOGGER.debug(
+                    "Using cached last meter value as fallback: %s",
+                    last_value,
+                )
+                return float(last_value)
 
         return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Return debug attributes."""
+        if not self.coordinator.data:
+            return {}
+
+        return {
+            "last_meter_value": self.coordinator.data.get(
+                "last_meter_value"
+            ),
+            "last_meter_time": self.coordinator.data.get(
+                "last_meter_time"
+            ),
+            "fallback_active": self._get_latest_meter_value() is None,
+        }
