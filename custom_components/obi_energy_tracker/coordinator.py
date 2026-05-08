@@ -1,8 +1,7 @@
 """Data update coordinator for Obi EnergyTracker."""
-
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -36,33 +35,37 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             config_entry=config_entry,
         )
         self.api = api
+        self._last_meter_value: float | None = None
+        self._last_meter_time: str | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch data from API.
-
-        Retrieves:
-        - Meter reading (Zählerstand) for the device
-        - Hourly energy data for the past 7 days
-        """
+        """Fetch data from API endpoint."""
         try:
             meter = await self.api.async_get_meter_data()
             _LOGGER.debug("Meter data: %s", meter)
 
-            # Fetch hourly data for past days (default 7 days)
-            end_date = datetime.now()
+            end_date = datetime.now(timezone.utc)
             hourly_data = await self.api.async_get_hourly_data(
                 start_date=end_date,
                 num_days=DAYS_OF_HISTORY,
             )
+
             _LOGGER.debug(
-                "Hourly data fetched: %s", "available" if hourly_data else "none"
+                "Hourly data fetched: %s",
+                "available" if hourly_data else "none",
             )
+
+            latest_meter = self._extract_latest_meter(meter)
+            if latest_meter is not None:
+                self._last_meter_value = latest_meter["value"]
+                self._last_meter_time = latest_meter["time"]
 
             _LOGGER.info(
                 "Successfully fetched data: meter=%s, hourly_days=%d",
                 "available" if meter else "none",
                 DAYS_OF_HISTORY,
             )
+
         except OSError as err:
             _LOGGER.error("Failed to update data: %s", err)
             raise UpdateFailed(f"Failed to update data: {err}") from err
@@ -70,4 +73,25 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {
             "hourly": hourly_data,
             "meter": meter,
+            "last_meter_value": self._last_meter_value,
+            "last_meter_time": self._last_meter_time,
         }
+
+    def _extract_latest_meter(self, meter_data: Any) -> dict[str, Any] | None:
+        """Extract the latest valid meter reading."""
+        if not meter_data or not isinstance(meter_data, list):
+            return None
+
+        for item in reversed(meter_data):
+            if not isinstance(item, dict):
+                continue
+
+            if "value" not in item or "time" not in item:
+                continue
+
+            return {
+                "value": float(item["value"]),
+                "time": item["time"],
+            }
+
+        return None
