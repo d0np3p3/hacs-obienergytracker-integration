@@ -1,4 +1,13 @@
-# "OBI Energy Tracker" - HACS Integration
+## Credits
+
+Original integration by @mla157:
+https://github.com/mla157/hacs-obienergytracker-integration
+
+This fork focuses on:
+- improved robustness
+- Home Assistant statistics compatibility
+- hourly handling improvements
+- long-term stability# "OBI Energy Tracker" - HACS Integration
 This integration allows you to monitor your **OBI Energy Tracker** device directly within Home Assistant. The OBI Energy Tracker is a cost-effective solution for reading smart energy meters, typically accessed via the heyOBI smartphone application.e.
 
 ## Installation
