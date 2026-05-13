@@ -147,27 +147,27 @@ class ObiEnergyTrackerAPI:
             return None
 
         try:
-if start_date is None:
-    start_date = datetime.now(timezone.utc)
+            if start_date is None:
+                start_date = datetime.now(timezone.utc)
 
-duration_start = start_date.astimezone(timezone.utc).replace(
-    hour=23,
-    minute=0,
-    second=0,
-    microsecond=0,
-)
+            duration_start = start_date.astimezone(timezone.utc).replace(
+                hour=23,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
 
-duration_hours = num_days * 24
+            duration_hours = num_days * 24
 
-start_str = duration_start.strftime(
-    "%Y-%m-%dT%H:%M:%SZ"
-)
+            start_str = duration_start.strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
 
-duration_str = f"{start_str}/PT{duration_hours}H"
+            duration_str = f"{start_str}/PT{duration_hours}H"
 
-_LOGGER.debug(
-    "Hourly duration string: %s", duration_str
-)
+            _LOGGER.debug(
+                "Hourly duration string: %s", duration_str
+            )
 
             url = (
                 f"{ENERGY_TRACKING_URL}/historical-data/"
