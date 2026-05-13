@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -147,18 +147,27 @@ class ObiEnergyTrackerAPI:
             return None
 
         try:
-            if start_date is None:
-                start_date = datetime.now()
+if start_date is None:
+    start_date = datetime.now(timezone.utc)
 
-            # Format as ISO 8601 datetime with Z suffix for UTC
-            # The API expects: start_dateT23:00:00Z/PT{days}H format
-            # So we use start_date at 23:00 UTC of previous day for 24-hour window
-            duration_start = start_date.replace(
-                hour=23, minute=0, second=0, microsecond=0
-            )
-            duration_hours = num_days * 24
+duration_start = start_date.astimezone(timezone.utc).replace(
+    hour=23,
+    minute=0,
+    second=0,
+    microsecond=0,
+)
 
-            duration_str = f"{duration_start.isoformat()}Z/PT{duration_hours}H"
+duration_hours = num_days * 24
+
+start_str = duration_start.strftime(
+    "%Y-%m-%dT%H:%M:%SZ"
+)
+
+duration_str = f"{start_str}/PT{duration_hours}H"
+
+_LOGGER.debug(
+    "Hourly duration string: %s", duration_str
+)
 
             url = (
                 f"{ENERGY_TRACKING_URL}/historical-data/"
