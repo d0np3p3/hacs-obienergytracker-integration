@@ -186,7 +186,12 @@ class ObiEnergyTrackerAPI:
             ) as response:
                 if response.status == 200:
                     return await response.json()
-                _LOGGER.error("Failed to get hourly data: %d", response.status)
+                if response.status == 400:
+                    _LOGGER.debug(
+                        "Hourly data unavailable for duration %s (400)", duration_str
+                    )
+                else:
+                    _LOGGER.error("Failed to get hourly data: %d", response.status)
                 return None
         except OSError as err:
             _LOGGER.error("Error getting hourly data: %s", err)
@@ -198,13 +203,13 @@ class ObiEnergyTrackerAPI:
             return None
 
         try:
-            # Dynamic duration: a 6-hour window ending now
+            # Dynamic duration: a 24-hour window ending now
             # Meter readings represent the total state at points in time
             now = datetime.now()
-            start_time = now - timedelta(hours=6)
+            start_time = now - timedelta(hours=24)
             # Format: 2026-01-18T08:55:11.896Z
             start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-            duration_str = f"{start_time_str}/PT6H"
+            duration_str = f"{start_time_str}/PT24H"
 
             url = (
                 f"{ENERGY_TRACKING_URL}/historical-data/"

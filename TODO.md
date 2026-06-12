@@ -1,13 +1,13 @@
 # OBI Energy Tracker TODO
 
 ## Stabilität
-- [ ] Hourly 400 Fehler nur noch als DEBUG loggen
+- [x] Hourly 400 Fehler nur noch als DEBUG loggen
 - [ ] Hourly endpoint optional behandeln
 - [ ] Retry/Backoff für API Requests
 - [ ] Bessere Exception-Behandlung
 
 ## Datenqualität
-- [ ] Meter-History von 6h auf 24h erhöhen
+- [x] Meter-History von 6h auf 24h erhöhen
 - [ ] Doppelte Werte filtern
 - [ ] Fehlende Werte interpolieren
 - [ ] Recorder-/Long-Term-Statistics prüfen
