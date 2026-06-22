@@ -9,7 +9,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -87,6 +87,21 @@ class ObiMeterReadingSensor(ObiEnergySensorBase):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, coordinator: ObiEnergyTrackerCoordinator) -> None:
+        """Initialize the meter reading sensor."""
+        super().__init__(coordinator)
+        self._last_native_value: float | None = None
+        self._last_native_value_set = False
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle coordinator updates and suppress duplicate readings."""
+        new_value = self.native_value
+        if not self._last_native_value_set or new_value != self._last_native_value:
+            self._last_native_value_set = True
+            self._last_native_value = new_value
+            self.async_write_ha_state()
 
     @property
     def native_value(self) -> float | None:
