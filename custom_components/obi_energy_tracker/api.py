@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
@@ -14,6 +15,9 @@ _LOGGER = logging.getLogger(__name__)
 # API endpoints
 LOGIN_URL = "https://www.obi.de/regi/auth/api/public/login"
 ENERGY_TRACKING_URL = "https://energy-tracking-backend.prod-eks.dbs.obi.solutions"
+
+_MAX_RETRIES = 3
+_RETRY_DELAY = 1  # seconds; doubled on each subsequent attempt
 
 
 class ObiEnergyTrackerAPI:
@@ -146,88 +150,96 @@ class ObiEnergyTrackerAPI:
         if not self.token or not self.bridge_id or not self.device_id:
             return None
 
-        try:
-            if start_date is None:
-                start_date = datetime.now(timezone.utc)
+        if start_date is None:
+            start_date = datetime.now(timezone.utc)
 
-            duration_start = start_date.astimezone(timezone.utc).replace(
-                hour=23,
-                minute=0,
-                second=0,
-                microsecond=0,
-            )
+        duration_start = start_date.astimezone(timezone.utc).replace(
+            hour=23,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
 
-            duration_hours = num_days * 24
+        duration_hours = num_days * 24
+        start_str = duration_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        duration_str = f"{start_str}/PT{duration_hours}H"
 
-            start_str = duration_start.strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
-            )
+        _LOGGER.debug("Hourly duration string: %s", duration_str)
 
-            duration_str = f"{start_str}/PT{duration_hours}H"
+        url = (
+            f"{ENERGY_TRACKING_URL}/historical-data/"
+            f"{self.bridge_id}/{self.device_id}/hourly"
+        )
+        params = {
+            "duration": duration_str,
+            "measures": "energy,negative_energy",
+        }
+        headers = self._get_auth_headers()
 
-            _LOGGER.debug(
-                "Hourly duration string: %s", duration_str
-            )
-
-            url = (
-                f"{ENERGY_TRACKING_URL}/historical-data/"
-                f"{self.bridge_id}/{self.device_id}/hourly"
-            )
-
-            params = {
-                "duration": duration_str,
-                "measures": "energy,negative_energy",
-            }
-
-            headers = self._get_auth_headers()
-
-            async with self.session.get(
-                url, params=params, headers=headers
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                _LOGGER.error("Failed to get hourly data: %d", response.status)
-                return None
-        except OSError as err:
-            _LOGGER.error("Error getting hourly data: %s", err)
-            return None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                async with self.session.get(
+                    url, params=params, headers=headers
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    if response.status == 400:
+                        _LOGGER.debug(
+                            "Hourly data unavailable for duration %s (400)", duration_str
+                        )
+                        return None
+                    _LOGGER.warning(
+                        "Failed to get hourly data: %d (attempt %d/%d)",
+                        response.status, attempt + 1, _MAX_RETRIES,
+                    )
+            except (OSError, ClientError) as err:
+                _LOGGER.warning(
+                    "Error getting hourly data (attempt %d/%d): %s",
+                    attempt + 1, _MAX_RETRIES, err,
+                )
+            if attempt < _MAX_RETRIES - 1:
+                await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
+        return None
 
     async def async_get_meter_data(self) -> dict[str, Any] | None:
         """Get meter reading data (Zählerstand)."""
         if not self.token or not self.bridge_id or not self.device_id:
             return None
 
-        try:
-            # Dynamic duration: a 6-hour window ending now
-            # Meter readings represent the total state at points in time
-            now = datetime.now()
-            start_time = now - timedelta(hours=6)
-            # Format: 2026-01-18T08:55:11.896Z
-            start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-            duration_str = f"{start_time_str}/PT6H"
+        now = datetime.now()
+        start_time = now - timedelta(hours=24)
+        start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        duration_str = f"{start_time_str}/PT24H"
 
-            url = (
-                f"{ENERGY_TRACKING_URL}/historical-data/"
-                f"{self.bridge_id}/{self.device_id}/meter"
-            )
+        url = (
+            f"{ENERGY_TRACKING_URL}/historical-data/"
+            f"{self.bridge_id}/{self.device_id}/meter"
+        )
+        params = {
+            "duration": duration_str,
+            "measures": "energy",
+        }
+        headers = self._get_auth_headers()
 
-            params = {
-                "duration": duration_str,
-                "measures": "energy",
-            }
-
-            headers = self._get_auth_headers()
-
-            async with self.session.get(
-                url, params=params, headers=headers
-            ) as response:
-                if response.status == 200:
-                    return await response.json()
-                _LOGGER.error("Failed to get meter data: %d", response.status)
-                return None
-        except OSError as err:
-            _LOGGER.error("Error getting meter data: %s", err)
-            return None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                async with self.session.get(
+                    url, params=params, headers=headers
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    _LOGGER.warning(
+                        "Failed to get meter data: %d (attempt %d/%d)",
+                        response.status, attempt + 1, _MAX_RETRIES,
+                    )
+            except (OSError, ClientError) as err:
+                _LOGGER.warning(
+                    "Error getting meter data (attempt %d/%d): %s",
+                    attempt + 1, _MAX_RETRIES, err,
+                )
+            if attempt < _MAX_RETRIES - 1:
+                await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
+        return None
 
     def _get_auth_headers(self) -> dict[str, str]:
         """Get headers with authorization token."""
