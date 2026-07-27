@@ -172,10 +172,27 @@ async def async_backfill_statistics(
         _LOGGER.debug("No meter readings returned for the missing period")
         return
 
-    statistics: list[StatisticData] = [
-        StatisticData(start=hour, state=value, sum=value)
-        for hour, (_, value) in sorted(buckets.items())
-    ]
+    # A meter reading only ever climbs. The API is known to emit stray zeros in
+    # its derived series, and one of those reaching the statistics table would
+    # register as the meter running backwards -- which the Energy dashboard
+    # reads as a counter reset and turns into a phantom spike.
+    statistics: list[StatisticData] = []
+    highest = 0.0
+    dropped = 0
+    for hour, (_, value) in sorted(buckets.items()):
+        if value < highest:
+            dropped += 1
+            continue
+        highest = value
+        statistics.append(StatisticData(start=hour, state=value, sum=value))
+
+    if dropped:
+        _LOGGER.warning(
+            "Skipped %d meter reading(s) that regressed below %s", dropped, highest
+        )
+
+    if not statistics:
+        return
 
     metadata: StatisticMetaData = {
         "has_sum": True,
