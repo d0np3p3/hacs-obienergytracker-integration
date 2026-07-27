@@ -153,14 +153,18 @@ class ObiEnergyTrackerAPI:
         if start_date is None:
             start_date = datetime.now(timezone.utc)
 
-        duration_start = start_date.astimezone(timezone.utc).replace(
-            hour=23,
+        duration_hours = num_days * 24
+
+        # ``start_date`` marks the *end* of the requested history. Anchoring the
+        # interval there and adding the duration would ask the API for a window
+        # reaching into the future, so step back by the full duration first.
+        duration_end = start_date.astimezone(timezone.utc).replace(
             minute=0,
             second=0,
             microsecond=0,
         )
+        duration_start = duration_end - timedelta(hours=duration_hours)
 
-        duration_hours = num_days * 24
         start_str = duration_start.strftime("%Y-%m-%dT%H:%M:%SZ")
         duration_str = f"{start_str}/PT{duration_hours}H"
 
@@ -201,15 +205,33 @@ class ObiEnergyTrackerAPI:
                 await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
         return None
 
-    async def async_get_meter_data(self) -> dict[str, Any] | None:
-        """Get meter reading data (Zählerstand)."""
+    async def async_get_meter_data(
+        self,
+        start: datetime | None = None,
+        hours: int = 24,
+    ) -> Any | None:
+        """Get meter reading data (Zählerstand) for a time window.
+
+        Args:
+            start: Beginning of the window; defaults to ``hours`` ago.
+            hours: Length of the window in hours.
+
+        Returns:
+            The decoded API payload -- a list of ``{"time", "value"}`` records.
+        """
         if not self.token or not self.bridge_id or not self.device_id:
             return None
 
-        now = datetime.now()
-        start_time = now - timedelta(hours=24)
+        if start is None:
+            start = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # The API expects UTC. Building the string from a naive local timestamp
+        # while suffixing "Z" would shift the window by the host's UTC offset.
+        start_time = start.astimezone(timezone.utc)
         start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        duration_str = f"{start_time_str}/PT24H"
+        duration_str = f"{start_time_str}/PT{hours}H"
+
+        _LOGGER.debug("Meter duration string: %s", duration_str)
 
         url = (
             f"{ENERGY_TRACKING_URL}/historical-data/"

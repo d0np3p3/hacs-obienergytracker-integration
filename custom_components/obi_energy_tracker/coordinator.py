@@ -5,11 +5,14 @@ from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
+from aiohttp import ClientError
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ObiEnergyTrackerAPI
 from .const import DOMAIN
+from .statistics import async_backfill_statistics
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,9 +69,19 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 DAYS_OF_HISTORY,
             )
 
-        except OSError as err:
+        # aiohttp raises ClientError, which is not an OSError, so catching only
+        # the latter would let network failures escape UpdateFailed and rob the
+        # coordinator of its retry handling.
+        except (OSError, ClientError) as err:
             _LOGGER.error("Failed to update data: %s", err)
             raise UpdateFailed(f"Failed to update data: {err}") from err
+
+        # Replay anything the recorder missed while polling was failing. A
+        # backfill problem must not take the live reading down with it.
+        try:
+            await async_backfill_statistics(self.hass, self.api)
+        except (OSError, ClientError) as err:
+            _LOGGER.warning("Could not backfill meter statistics: %s", err)
 
         return {
             "hourly": hourly_data,

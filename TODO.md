@@ -8,9 +8,11 @@
 
 ## Datenqualität
 - [x] Meter-History von 6h auf 24h erhöhen
+- [x] Recorder-/Long-Term-Statistics prüfen
+- [x] Lücken nach Ausfall rückwirkend nachtragen (Statistics-Import)
 - [ ] Doppelte Werte filtern
 - [ ] Fehlende Werte interpolieren
-- [ ] Recorder-/Long-Term-Statistics prüfen
+- [ ] Einheit klären: Werte sehen nach kWh aus, Sensor meldet Wh
 
 ## Sensoren
 - [ ] Verbrauch pro Stunde berechnen

@@ -7,6 +7,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ObiEnergyTrackerAPI
@@ -38,10 +39,12 @@ async def async_setup_entry(
         device_id=entry.data.get(CONF_DEVICE_ID),
     )
 
-    # Authenticate
+    # Authenticate. A failure here is usually the cloud API being unreachable
+    # rather than bad credentials, so ask Home Assistant to retry with backoff
+    # instead of returning False, which would strand the entry until the user
+    # reloads it by hand.
     if not await api.async_login():
-        _LOGGER.error("Failed to authenticate with Obi EnergyTracker")
-        return False
+        raise ConfigEntryNotReady("Could not authenticate with Obi EnergyTracker")
 
     # Create coordinator
     coordinator = ObiEnergyTrackerCoordinator(hass, api, entry)
