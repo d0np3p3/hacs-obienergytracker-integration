@@ -31,17 +31,26 @@ newest reading was recorded.
 The integration now replays missed readings into long-term statistics under
 `obi_energy_tracker:meter_reading`. On every refresh it compares the last stored
 hour against the meter endpoint and imports whatever is missing, reaching back
-up to 30 days. Long gaps are fetched in 24-hour chunks, at most 32 per refresh,
-and continue on the next cycle.
+up to 30 days. The endpoint samples every five minutes and appears to cap a
+response at 48 records, so gaps are fetched in 3-hour chunks, at most 32 per
+refresh; a multi-week gap therefore closes over several refreshes rather than
+all at once.
 
 To use it in the Energy dashboard, pick **OBI Energy Tracker Meter Reading**
 under *Settings → Dashboards → Energy → Grid consumption*. The existing
 `sensor.obi_energytracker_meter_reading` entity keeps working unchanged.
 
-> The statistic is recorded in **kWh**. The meter advances by roughly 9 units per
-> day, which is only plausible as kilowatt-hours, while the sensor entity still
-> declares `Wh`. Compare a reading against your physical meter and adjust
-> `METER_UNIT` in `const.py` if needed.
+> Only what the OBI backend actually stored can be recovered. If the tracker
+> itself was offline during the outage, those hours were never uploaded and stay
+> empty — enable debug logging and look for `Meter chunk ... returned 0 records`
+> to tell the two cases apart.
+
+### Units
+
+The API reports the meter reading as whole watt-hours (`"value": 17320752`),
+which Home Assistant converts to `17320.752 kWh` for display. Both the sensor
+and the imported statistics are therefore declared in `Wh` (`METER_UNIT` in
+`const.py`) and carry the raw value.
 
 ## Configuration
 

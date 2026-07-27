@@ -17,19 +17,23 @@ ATTR_DEVICE_ID = "device_id"
 
 # Long-term statistics
 #
-# The meter endpoint reports an absolute meter reading (Zaehlerstand). Observed
-# readings advance by roughly 9 kWh per day on a normal household connection,
-# which is only plausible if the API reports kilowatt-hours -- interpreting the
-# same numbers as watt-hours would imply an average draw of 0.4 W. If a physical
-# meter comparison ever contradicts this, METER_UNIT is the single place to fix.
-METER_UNIT = "kWh"
+# The meter endpoint reports the absolute meter reading (Zaehlerstand) as a whole
+# number of watt-hours -- a raw sample looks like {"time": ..., "value": 17320752}
+# and surfaces as 17320.752 kWh once Home Assistant converts it for display. The
+# imported statistics carry the raw value, so they must be declared in Wh to
+# match; the dashboard applies the same conversion.
+METER_UNIT = "Wh"
 STATISTIC_ID_METER = f"{DOMAIN}:meter_reading"
 STATISTIC_NAME_METER = "OBI Energy Tracker Meter Reading"
 
 # How far back to reach when no statistics exist yet.
 BACKFILL_DAYS = 30
-# Window size of a single meter request while catching up on a gap.
-BACKFILL_CHUNK_HOURS = 24
+# Window size of a single meter request while catching up on a gap. The endpoint
+# samples every five minutes and was observed returning exactly 48 records for a
+# 24 hour request, so it appears to cap a response rather than honour the full
+# window. Three hours stays well inside that ceiling; raise it once a longer
+# window is confirmed to come back complete.
+BACKFILL_CHUNK_HOURS = 3
 # Upper bound of requests per refresh so a long outage cannot stall the
 # coordinator; remaining chunks are picked up on the following refresh.
 BACKFILL_MAX_CHUNKS = 32

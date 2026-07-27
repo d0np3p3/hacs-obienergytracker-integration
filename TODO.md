@@ -10,9 +10,10 @@
 - [x] Meter-History von 6h auf 24h erhöhen
 - [x] Recorder-/Long-Term-Statistics prüfen
 - [x] Lücken nach Ausfall rückwirkend nachtragen (Statistics-Import)
+- [x] Einheit geklärt: API liefert ganzzahlige Wh, HA rechnet in kWh um
 - [ ] Doppelte Werte filtern
 - [ ] Fehlende Werte interpolieren
-- [ ] Einheit klären: Werte sehen nach kWh aus, Sensor meldet Wh
+- [ ] Klären ob /meter bei 48 Records deckelt (dann Chunk-Größe anheben)
 
 ## Sensoren
 - [ ] Verbrauch pro Stunde berechnen

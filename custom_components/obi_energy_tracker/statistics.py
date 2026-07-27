@@ -147,6 +147,15 @@ async def async_backfill_statistics(
         payload = await api.async_get_meter_data(
             start=cursor, hours=BACKFILL_CHUNK_HOURS
         )
+        # Logged per chunk because the endpoint is known to return fewer records
+        # than the requested window covers; an empty stretch here means the OBI
+        # backend never stored that period and it cannot be recovered.
+        _LOGGER.debug(
+            "Meter chunk %s +%dh returned %d records",
+            cursor,
+            BACKFILL_CHUNK_HOURS,
+            len(payload) if isinstance(payload, list) else 0,
+        )
         _bucket_readings(payload, start, buckets)
         cursor += timedelta(hours=BACKFILL_CHUNK_HOURS)
         chunks += 1

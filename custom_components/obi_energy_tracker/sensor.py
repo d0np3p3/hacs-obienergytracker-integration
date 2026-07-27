@@ -83,11 +83,8 @@ class ObiMeterReadingSensor(ObiEnergySensorBase):
 
     _attr_name = "Meter Reading"
     _attr_unique_id = "obi_energytracker_meter_reading"
-    # NOTE: recorded readings advance ~9 per day, which only makes sense as
-    # kilowatt-hours -- see METER_UNIT in const.py, which the imported long-term
-    # statistics already use. Correcting this to match is a unit change on an
-    # entity that carries history, so it is left for a deliberate migration
-    # rather than folded into the statistics work.
+    # The API reports whole watt-hours (e.g. 17320752); Home Assistant converts
+    # to kWh for display, which is why states read like 17320.752.
     _attr_native_unit_of_measurement = "Wh"
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
