@@ -4,10 +4,18 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from datetime import datetime
+
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
+)
+from homeassistant.const import (
+    PERCENTAGE,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfPower,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -32,6 +40,10 @@ async def async_setup_entry(
 
     sensors = [
         ObiMeterReadingSensor(coordinator),
+        ObiLivePowerSensor(coordinator),
+        ObiLiveBatterySensor(coordinator),
+        ObiLiveSignalSensor(coordinator),
+        ObiLiveLastMessageSensor(coordinator),
     ]
 
     async_add_entities(sensors)
@@ -150,3 +162,76 @@ class ObiMeterReadingSensor(ObiEnergySensorBase):
             ),
             "fallback_active": self._get_latest_meter_value() is None,
         }
+
+
+class ObiLiveSensorBase(ObiEnergySensorBase):
+    """Base for values pushed over the live websocket."""
+
+    _live_key: str
+
+    @property
+    def available(self) -> bool:
+        """Report unavailable once the push channel goes quiet.
+
+        Holding the last pushed number on screen after the socket died would
+        misrepresent a stale reading as current.
+        """
+        return super().available and not self.coordinator.live_stale
+
+    @property
+    def native_value(self) -> float | None:
+        """Return the most recent pushed measurement."""
+        return self.coordinator.live.get(self._live_key)
+
+
+class ObiLivePowerSensor(ObiLiveSensorBase):
+    """Instantaneous power draw."""
+
+    _live_key = "power"
+    _attr_name = "Live Power"
+    _attr_unique_id = "obi_energytracker_live_power"
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+
+class ObiLiveBatterySensor(ObiLiveSensorBase):
+    """Battery level of the meter reader."""
+
+    _live_key = "battery"
+    _attr_name = "Reader Battery"
+    _attr_unique_id = "obi_energytracker_live_battery"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+
+class ObiLiveSignalSensor(ObiLiveSensorBase):
+    """Radio signal strength reported by the reader."""
+
+    _live_key = "rssi"
+    _attr_name = "Reader Signal Strength"
+    _attr_unique_id = "obi_energytracker_live_rssi"
+    _attr_native_unit_of_measurement = SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+    _attr_device_class = SensorDeviceClass.SIGNAL_STRENGTH
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+
+class ObiLiveLastMessageSensor(ObiEnergySensorBase):
+    """When the last live frame arrived."""
+
+    _attr_name = "Last Live Message"
+    _attr_unique_id = "obi_energytracker_live_last_message"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    @property
+    def native_value(self) -> datetime | None:
+        """Return the arrival time of the last frame.
+
+        Deliberately stays available while stale -- its whole purpose is to show
+        how long the silence has lasted.
+        """
+        return self.coordinator.live_last_message

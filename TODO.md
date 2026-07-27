@@ -3,8 +3,9 @@
 ## Stabilität
 - [x] Hourly 400 Fehler nur noch als DEBUG loggen
 - [ ] Hourly endpoint optional behandeln
-- [ ] Retry/Backoff für API Requests
-- [ ] Bessere Exception-Behandlung
+- [x] Retry/Backoff für API Requests
+- [x] Bessere Exception-Behandlung
+- [x] Token-Refresh (war: Token lief nach ~1h ab, alle Calls still auf None)
 
 ## Datenqualität
 - [x] Meter-History von 6h auf 24h erhöhen
@@ -18,11 +19,11 @@
 ## Sensoren
 - [ ] Verbrauch pro Stunde berechnen
 - [ ] Tagesverbrauch Sensor
-- [ ] Momentanverbrauch ableiten
+- [x] Momentanverbrauch (Live-Power via WebSocket)
 - [ ] Utility Meter Integration vorbereiten
 
 ## Home Assistant
-- [ ] Diagnostics Support
+- [x] Diagnostics Support (Batterie, Signalstärke)
 - [ ] Repair Suggestions
 - [ ] Device Info verbessern
 - [ ] Translation Strings ergänzen
@@ -34,7 +35,7 @@
 - [ ] Release Workflow automatisieren
 
 ## Forschung
-- [ ] Websocket/API Reverse Engineering
-- [ ] Push statt Polling prüfen
+- [x] Websocket/API Reverse Engineering
+- [x] Push statt Polling (WebSocket ergänzt das Polling)
 - [ ] Weitere Sensoren unterstützen
 - [ ] Multi-Meter Support

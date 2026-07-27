@@ -1,6 +1,8 @@
 """Data update coordinator for Obi EnergyTracker."""
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
@@ -9,9 +11,17 @@ from aiohttp import ClientError
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import ObiEnergyTrackerAPI
-from .const import DOMAIN, LIVE_METER_HOURS
+from .const import (
+    DOMAIN,
+    LIVE_METER_HOURS,
+    LIVE_RECONNECT_DELAY,
+    LIVE_STALE_AFTER,
+    UPLOAD_INTERVAL_LIVE,
+    UPLOAD_INTERVAL_NORMAL,
+)
 from .statistics import async_backfill_statistics
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,6 +50,83 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.api = api
         self._last_meter_value: float | None = None
         self._last_meter_time: str | None = None
+
+        # Live state arrives out of band over the websocket, so it is kept
+        # beside the polled payload rather than inside it -- writing it into
+        # self.data would reset the polling timer on every pushed frame.
+        self.live: dict[str, float] = {}
+        self.live_last_message: datetime | None = None
+        self.live_mode = False
+        self._live_task: asyncio.Task[None] | None = None
+        self._live_stop = asyncio.Event()
+
+    @property
+    def live_stale(self) -> bool:
+        """Return whether the push channel has gone quiet."""
+        if self.live_last_message is None:
+            return True
+        age = (dt_util.utcnow() - self.live_last_message).total_seconds()
+        return age > LIVE_STALE_AFTER
+
+    def async_start_live(self) -> None:
+        """Begin consuming the live websocket."""
+        if self._live_task is not None:
+            return
+        self._live_stop.clear()
+        self._live_task = self.config_entry.async_create_background_task(
+            self.hass, self._async_live_loop(), f"{DOMAIN}_live"
+        )
+
+    async def async_stop_live(self) -> None:
+        """Stop the live consumer and restore the normal upload interval."""
+        self._live_stop.set()
+
+        if self._live_task is not None:
+            self._live_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._live_task
+            self._live_task = None
+
+        if self.live_mode:
+            await self.api.async_set_upload_interval(UPLOAD_INTERVAL_NORMAL)
+            self.live_mode = False
+
+    async def async_set_live_mode(self, enabled: bool) -> bool:
+        """Switch the reader between two-second and five-minute reporting."""
+        interval = UPLOAD_INTERVAL_LIVE if enabled else UPLOAD_INTERVAL_NORMAL
+
+        if not await self.api.async_set_upload_interval(interval):
+            return False
+
+        self.live_mode = enabled
+        self.async_update_listeners()
+        return True
+
+    async def _async_live_loop(self) -> None:
+        """Hold the websocket open, reconnecting until asked to stop."""
+        while not self._live_stop.is_set():
+            try:
+                async for measurements in self.api.async_live_messages():
+                    if self._live_stop.is_set():
+                        break
+                    self.live.update(measurements)
+                    self.live_last_message = dt_util.utcnow()
+                    self.async_update_listeners()
+            except asyncio.CancelledError:
+                raise
+            except (OSError, ClientError) as err:
+                _LOGGER.debug("Live websocket dropped: %s", err)
+            except Exception:  # noqa: BLE001 - undocumented protocol
+                _LOGGER.exception("Unexpected error on the live websocket")
+
+            if self._live_stop.is_set():
+                break
+
+            # Wait before reconnecting, but wake immediately on shutdown.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(
+                    self._live_stop.wait(), timeout=LIVE_RECONNECT_DELAY
+                )
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API endpoint."""

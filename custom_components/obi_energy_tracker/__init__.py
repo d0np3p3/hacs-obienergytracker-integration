@@ -16,7 +16,7 @@ from .coordinator import ObiEnergyTrackerCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.SWITCH]
 
 
 type ObiEnergyTrackerConfigEntry = ConfigEntry[ObiEnergyTrackerCoordinator]
@@ -55,6 +55,11 @@ async def async_setup_entry(
     # Forward entry setup to platforms
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
+    # The socket pushes at whatever interval the reader is on, so it is worth
+    # holding open even without live mode: readings arrive as they happen
+    # instead of waiting for the next poll.
+    coordinator.async_start_live()
+
     return True
 
 
@@ -62,6 +67,10 @@ async def async_unload_entry(
     hass: HomeAssistant, entry: ObiEnergyTrackerConfigEntry
 ) -> bool:
     """Unload a config entry."""
+    # Close the socket and hand the reader back its normal interval first, so a
+    # reload does not leave it stuck on the battery-hungry cadence.
+    await entry.runtime_data.async_stop_live()
+
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         hass.data[DOMAIN].pop(entry.entry_id, None)
 

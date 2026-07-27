@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 from typing import Any
 
-from aiohttp import ClientError, ClientSession
+from aiohttp import ClientError, ClientSession, WSMsgType
 import jwt
+
+from .const import LIVE_DATA_URL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,8 +26,76 @@ ENERGY_TRACKING_URL = "https://energy-tracking-backend.prod-eks.dbs.obi.solution
 # Key identified by the Karo-X/obi_energy project.
 API_KEY = "Rh57q3vtOPYTf6FtArVN1boy2AyEiIqaGEmnMks7"
 
+# The bearer token is a JWT the app re-requests roughly hourly. Nothing in the
+# response states its lifetime, so it is renewed well before the hour is out
+# rather than waiting for the first 401.
+TOKEN_MAX_AGE = timedelta(minutes=55)
+
 _MAX_RETRIES = 3
 _RETRY_DELAY = 1  # seconds; doubled on each subsequent attempt
+
+# Measurements carried by live websocket frames.
+_LIVE_FIELDS = frozenset({"power", "rssi", "battery"})
+
+
+def _iter_json_objects(raw: str) -> list[Any]:
+    """Decode a frame that may carry several JSON documents back to back."""
+    decoder = json.JSONDecoder()
+    objects: list[Any] = []
+    index = 0
+    length = len(raw)
+
+    while index < length:
+        while index < length and raw[index].isspace():
+            index += 1
+        if index >= length:
+            break
+        try:
+            obj, index = decoder.raw_decode(raw, index)
+        except ValueError:
+            break
+        objects.append(obj)
+
+    return objects
+
+
+def _extract_live_fields(message: Any) -> dict[str, float]:
+    """Pull known measurements out of a frame whose exact shape is unverified.
+
+    The live protocol is undocumented and nests its payload differently across
+    app versions -- sometimes as a dict, sometimes as an embedded JSON string.
+    Rather than hard-code one layout and silently yield nothing when it shifts,
+    walk the whole structure and take the first value found for each field.
+    """
+    found: dict[str, float] = {}
+    pending: list[Any] = [message]
+
+    while pending:
+        node = pending.pop()
+
+        if isinstance(node, str):
+            stripped = node.lstrip()
+            if not stripped.startswith(("{", "[")):
+                continue
+            try:
+                node = json.loads(stripped)
+            except ValueError:
+                continue
+
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if (
+                    key.lower() in _LIVE_FIELDS
+                    and isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                ):
+                    found.setdefault(key.lower(), float(value))
+                else:
+                    pending.append(value)
+        elif isinstance(node, list):
+            pending.extend(node)
+
+    return found
 
 
 class ObiEnergyTrackerAPI:
@@ -44,6 +116,7 @@ class ObiEnergyTrackerAPI:
         self.password = password
         self.country = country
         self.token: str | None = None
+        self._token_obtained_at: datetime | None = None
         self.bridge_id = bridge_id
         self.device_id = device_id
 
@@ -82,11 +155,26 @@ class ObiEnergyTrackerAPI:
                     _LOGGER.error("No token received from login response")
                     return False
 
+                self._token_obtained_at = datetime.now(timezone.utc)
                 _LOGGER.debug("Successfully authenticated with Obi EnergyTracker")
                 return True
         except (OSError, ClientError) as err:
             _LOGGER.error("Login error: %s", err)
             return False
+
+    async def async_ensure_token(self) -> bool:
+        """Return a usable token, renewing it once it approaches expiry.
+
+        Without this the integration authenticated once at setup and then held a
+        token forever: every later call came back 401, was reported as "no data"
+        and left the sensor serving a cached value indefinitely.
+        """
+        if self.token and self._token_obtained_at is not None:
+            if datetime.now(timezone.utc) - self._token_obtained_at < TOKEN_MAX_AGE:
+                return True
+            _LOGGER.debug("Bearer token is due for renewal")
+
+        return await self.async_login()
 
     async def async_get_bridge_info(self) -> dict[str, str] | None:
         """Get bridge and device IDs from user profile."""
@@ -184,32 +272,9 @@ class ObiEnergyTrackerAPI:
             "duration": duration_str,
             "measures": "energy,negative_energy",
         }
-        headers = self._get_auth_headers()
-
-        for attempt in range(_MAX_RETRIES):
-            try:
-                async with self.session.get(
-                    url, params=params, headers=headers
-                ) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    if response.status == 400:
-                        _LOGGER.debug(
-                            "Hourly data unavailable for duration %s (400)", duration_str
-                        )
-                        return None
-                    _LOGGER.warning(
-                        "Failed to get hourly data: %d (attempt %d/%d)",
-                        response.status, attempt + 1, _MAX_RETRIES,
-                    )
-            except (OSError, ClientError) as err:
-                _LOGGER.warning(
-                    "Error getting hourly data (attempt %d/%d): %s",
-                    attempt + 1, _MAX_RETRIES, err,
-                )
-            if attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
-        return None
+        return await self._async_get_json(
+            url, params, "hourly data", accepted_empty=(400,)
+        )
 
     async def async_get_meter_data(
         self,
@@ -247,27 +312,121 @@ class ObiEnergyTrackerAPI:
             "duration": duration_str,
             "measures": "energy",
         }
-        headers = self._get_auth_headers()
+        return await self._async_get_json(url, params, "meter data")
 
+    async def _async_get_json(
+        self,
+        url: str,
+        params: dict[str, str],
+        description: str,
+        accepted_empty: tuple[int, ...] = (),
+    ) -> Any | None:
+        """GET and decode JSON, renewing a rejected token and retrying."""
         for attempt in range(_MAX_RETRIES):
+            if not await self.async_ensure_token():
+                return None
+
             try:
                 async with self.session.get(
-                    url, params=params, headers=headers
+                    url, params=params, headers=self._get_auth_headers()
                 ) as response:
                     if response.status == 200:
                         return await response.json()
+
+                    if response.status == 401:
+                        # Rejected ahead of the assumed lifetime; drop it and
+                        # let the next pass log in again.
+                        _LOGGER.debug("Token rejected for %s, renewing", description)
+                        self.token = None
+                        self._token_obtained_at = None
+                        continue
+
+                    if response.status in accepted_empty:
+                        _LOGGER.debug(
+                            "No %s for this window (%d)", description, response.status
+                        )
+                        return None
+
                     _LOGGER.warning(
-                        "Failed to get meter data: %d (attempt %d/%d)",
-                        response.status, attempt + 1, _MAX_RETRIES,
+                        "Failed to get %s: %d (attempt %d/%d)",
+                        description, response.status, attempt + 1, _MAX_RETRIES,
                     )
             except (OSError, ClientError) as err:
                 _LOGGER.warning(
-                    "Error getting meter data (attempt %d/%d): %s",
-                    attempt + 1, _MAX_RETRIES, err,
+                    "Error getting %s (attempt %d/%d): %s",
+                    description, attempt + 1, _MAX_RETRIES, err,
                 )
+
             if attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
+                await asyncio.sleep(_RETRY_DELAY * (2**attempt))
+
         return None
+
+    async def async_set_upload_interval(self, seconds: int) -> bool:
+        """Ask the bridge how often the reader should report."""
+        if not self.device_id or not await self.async_ensure_token():
+            return False
+
+        url = f"{ENERGY_TRACKING_URL}/sensors/{self.device_id}"
+        headers = self._get_auth_headers()
+        headers["Accept"] = (
+            "application/vnd.obi.companion.energy-tracking.sensor.v1+json"
+        )
+        headers["Content-Type"] = "application/json"
+
+        try:
+            async with self.session.patch(
+                url,
+                json={"id": self.device_id, "uploadInterval": seconds},
+                headers=headers,
+            ) as response:
+                if response.status in (200, 204):
+                    _LOGGER.debug("Upload interval set to %ds", seconds)
+                    return True
+                _LOGGER.warning(
+                    "Could not set upload interval to %ds: %d", seconds, response.status
+                )
+                return False
+        except (OSError, ClientError) as err:
+            _LOGGER.warning("Error setting upload interval: %s", err)
+            return False
+
+    async def async_live_messages(self) -> AsyncIterator[dict[str, float]]:
+        """Yield live measurements for as long as the websocket stays up."""
+        if not self.bridge_id or not self.device_id:
+            return
+        if not await self.async_ensure_token():
+            return
+
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Accept": "*/*",
+            "Accept-Language": "de-DE,de;q=0.9",
+            "User-Agent": "app_client",
+            "x-api-key": API_KEY,
+            "X-Platform": "iOS",
+            "X-Lib-Version": "26.6.9",
+        }
+
+        async with self.session.ws_connect(
+            LIVE_DATA_URL,
+            params={"bridgeId": self.bridge_id, "sensorId": self.device_id},
+            headers=headers,
+            heartbeat=30,
+            timeout=30,
+            compress=15,
+        ) as socket:
+            _LOGGER.debug("Live websocket connected")
+
+            async for frame in socket:
+                if frame.type is not WSMsgType.TEXT:
+                    if frame.type in (WSMsgType.CLOSED, WSMsgType.ERROR):
+                        break
+                    continue
+
+                for message in _iter_json_objects(frame.data):
+                    if measurements := _extract_live_fields(message):
+                        yield measurements
 
     def _get_auth_headers(self) -> dict[str, str]:
         """Get headers with authorization token."""

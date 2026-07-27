@@ -15,6 +15,20 @@ DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
 ATTR_BRIDGE_ID = "bridge_id"
 ATTR_DEVICE_ID = "device_id"
 
+# Live mode (websocket push)
+#
+# The bridge normally uploads every five minutes. Live mode asks it to report
+# every two seconds instead, which is what the app does while its live screen is
+# open -- and which drains the reader's battery, so it stays opt-in and is reset
+# on unload. The socket itself is harmless and stays connected either way; at
+# the normal interval it simply pushes a reading every five minutes.
+LIVE_DATA_URL = "wss://energy-tracking-livemode.prod-eks.dbs.obi.solutions/retrieving"
+UPLOAD_INTERVAL_LIVE = 2
+UPLOAD_INTERVAL_NORMAL = 300
+# Seconds without a message before the socket is considered dead.
+LIVE_STALE_AFTER = 90
+LIVE_RECONNECT_DELAY = 10
+
 # Long-term statistics
 #
 # The meter endpoint reports the absolute meter reading (Zaehlerstand) as a whole
