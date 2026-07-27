@@ -16,6 +16,12 @@ _LOGGER = logging.getLogger(__name__)
 LOGIN_URL = "https://www.obi.de/regi/auth/api/public/login"
 ENERGY_TRACKING_URL = "https://energy-tracking-backend.prod-eks.dbs.obi.solutions"
 
+# The heyOBI app sends a fixed key alongside the bearer token. Requests are
+# answered without it, but not necessarily with the same completeness, so the
+# app's headers are mirrored as closely as possible.
+# Key identified by the Karo-X/obi_energy project.
+API_KEY = "Rh57q3vtOPYTf6FtArVN1boy2AyEiIqaGEmnMks7"
+
 _MAX_RETRIES = 3
 _RETRY_DELAY = 1  # seconds; doubled on each subsequent attempt
 
@@ -273,5 +279,11 @@ class ObiEnergyTrackerAPI:
             "Accept-Encoding": "gzip",
             "User-Agent": "app_client",
             "Authorization": f"Bearer {self.token}",
+            "x-api-key": API_KEY,
+            # Historical windows are re-requested with shifting bounds while
+            # backfilling; a cached response would silently repeat the previous
+            # window's records.
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
             "Connection": "Keep-Alive",
         }

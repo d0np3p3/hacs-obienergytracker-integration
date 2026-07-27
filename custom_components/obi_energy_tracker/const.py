@@ -26,6 +26,12 @@ METER_UNIT = "Wh"
 STATISTIC_ID_METER = f"{DOMAIN}:meter_reading"
 STATISTIC_NAME_METER = "OBI Energy Tracker Meter Reading"
 
+# Window for the live reading. Kept short deliberately: a wide window has been
+# observed to make the API answer with older records instead of the newest one,
+# which leaves the sensor stuck on a stale value. One hour still tolerates a
+# missed poll at the five-minute scan interval.
+LIVE_METER_HOURS = 1
+
 # How far back to reach when no statistics exist yet.
 BACKFILL_DAYS = 30
 # Window size of a single meter request while catching up on a gap. The endpoint

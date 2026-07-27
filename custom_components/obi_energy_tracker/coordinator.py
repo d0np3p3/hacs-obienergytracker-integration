@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ObiEnergyTrackerAPI
-from .const import DOMAIN
+from .const import DOMAIN, LIVE_METER_HOURS
 from .statistics import async_backfill_statistics
 
 _LOGGER = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API endpoint."""
         try:
-            meter = await self.api.async_get_meter_data()
+            meter = await self.api.async_get_meter_data(hours=LIVE_METER_HOURS)
             _LOGGER.debug("Meter data: %s", meter)
 
             end_date = datetime.now(timezone.utc)
