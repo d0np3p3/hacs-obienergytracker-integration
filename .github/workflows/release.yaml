@@ -1,0 +1,103 @@
+name: Release
+
+# Cutting a release means pushing a tag:
+#
+#   git tag v0.0.8 && git push origin v0.0.8
+#
+# The tag is the trigger and the single source of truth. It must match the
+# version in manifest.json -- the previous workflow had no such check, which is
+# how the repository ended up with tags (0.0.0.4a, 0.0.1-alpha) that matched
+# neither each other nor the manifest.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.0.8"
+        required: true
+
+permissions: {}
+
+jobs:
+  verify:
+    name: Verify version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Tag must be semver and match the manifest
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+
+          if ! printf '%s' "$version" \
+            | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.PATCH[-prerelease]"
+            exit 1
+          fi
+
+          manifest=$(jq -r .version custom_components/obi_energy_tracker/manifest.json)
+          if [ "$version" != "$manifest" ]; then
+            echo "::error::Tag says $version, manifest.json says $manifest"
+            exit 1
+          fi
+
+          echo "Releasing $version"
+
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+
+      - name: Run hassfest validation
+        uses: home-assistant/actions/hassfest@f6f29a7ee3fa0eccadf3620a7b9ee00ab54ec03b # master
+
+      - name: Run HACS validation
+        uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
+        with:
+          category: integration
+          ignore: brands
+
+  release:
+    name: Publish release
+    needs: [verify, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          # Anything carrying a prerelease suffix is published as one, so HACS
+          # keeps offering the last stable version by default.
+          prerelease=""
+          case "${TAG#v}" in
+            *-*) prerelease="--prerelease" ;;
+          esac
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            $prerelease

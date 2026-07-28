@@ -29,10 +29,10 @@
 - [ ] Translation Strings ergänzen
 
 ## HACS / Release
-- [ ] SemVer sauber nutzen
-- [ ] GitHub Actions hinzufügen
-- [ ] hassfest Integration
-- [ ] Release Workflow automatisieren
+- [x] SemVer sauber nutzen (im Release-Workflow erzwungen)
+- [x] GitHub Actions hinzufügen
+- [x] hassfest Integration
+- [x] Release Workflow automatisieren
 
 ## Forschung
 - [x] Websocket/API Reverse Engineering
