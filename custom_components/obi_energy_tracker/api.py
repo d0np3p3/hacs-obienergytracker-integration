@@ -37,6 +37,9 @@ _RETRY_DELAY = 1  # seconds; doubled on each subsequent attempt
 # Measurements carried by live websocket frames.
 _LIVE_FIELDS = frozenset({"power", "rssi", "battery"})
 
+# Raw frames to log per connection before falling silent.
+_LIVE_FRAMES_TO_LOG = 3
+
 
 def _iter_json_objects(raw: str) -> list[Any]:
     """Decode a frame that may carry several JSON documents back to back."""
@@ -117,6 +120,7 @@ class ObiEnergyTrackerAPI:
         self.country = country
         self.token: str | None = None
         self._token_obtained_at: datetime | None = None
+        self._live_frames_logged = 0
         self.bridge_id = bridge_id
         self.device_id = device_id
 
@@ -424,9 +428,29 @@ class ObiEnergyTrackerAPI:
                         break
                     continue
 
+                # The payload layout is undocumented. Dump the opening frames
+                # verbatim so a shape that yields nothing can be diagnosed from
+                # a log alone; at the two-second cadence anything beyond a
+                # handful would just flood the log.
+                if self._live_frames_logged < _LIVE_FRAMES_TO_LOG:
+                    self._live_frames_logged += 1
+                    _LOGGER.debug(
+                        "Live frame %d/%d: %s",
+                        self._live_frames_logged,
+                        _LIVE_FRAMES_TO_LOG,
+                        frame.data,
+                    )
+
                 for message in _iter_json_objects(frame.data):
-                    if measurements := _extract_live_fields(message):
+                    measurements = _extract_live_fields(message)
+                    if measurements:
                         yield measurements
+                    elif self._live_frames_logged <= _LIVE_FRAMES_TO_LOG:
+                        # Parsed cleanly but held nothing recognisable -- the
+                        # exact failure the tolerant parser is meant to survive.
+                        _LOGGER.debug(
+                            "Live frame carried no known measurement: %s", message
+                        )
 
     def _get_auth_headers(self) -> dict[str, str]:
         """Get headers with authorization token."""
