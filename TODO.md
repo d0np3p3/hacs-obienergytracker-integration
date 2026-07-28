@@ -14,7 +14,7 @@
 - [x] Einheit geklärt: API liefert ganzzahlige Wh, HA rechnet in kWh um
 - [ ] Doppelte Werte filtern
 - [ ] Fehlende Werte interpolieren
-- [ ] Klären ob /meter bei 48 Records deckelt (dann Chunk-Größe anheben)
+- [x] /meter deckelt nicht: 720h Rückstand real nachgetragen, 3h-Blöcke passen
 
 ## Sensoren
 - [ ] Verbrauch pro Stunde berechnen

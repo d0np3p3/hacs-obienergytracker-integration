@@ -48,6 +48,26 @@ its whole purpose is to show how long the silence has lasted.
 > is searched for `power`, `rssi` and `battery` wherever they sit — so a change
 > in nesting degrades to missing values rather than a crash.
 
+### Live power needs the meter PIN
+
+If `live_power` stays unavailable while battery and signal strength report
+normally, the meter is withholding the value rather than the integration losing
+it. A frame then looks like this:
+
+```json
+{"event":"mqttMessage","data":{"rssi":-106,"power":null,"battery":82}}
+```
+
+Modern German meters only publish the cumulative register until the PIN for the
+extended display is entered at the meter itself. Instantaneous power stays
+locked, so the reader has nothing to forward. Battery and signal strength come
+from the reader rather than the meter, which is why they keep working — and the
+meter reading and gap recovery are unaffected, since they only need the
+cumulative register.
+
+Until the PIN is entered, live mode costs reader battery without gaining
+anything: the faster upload interval carries the same `null`.
+
 ## Gap recovery
 
 A Home Assistant sensor can only publish its *current* value, so any period the
