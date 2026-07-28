@@ -171,12 +171,18 @@ class ObiLiveSensorBase(ObiEnergySensorBase):
 
     @property
     def available(self) -> bool:
-        """Report unavailable once the push channel goes quiet.
+        """Report unavailable when the value is stale or simply not reported.
 
         Holding the last pushed number on screen after the socket died would
-        misrepresent a stale reading as current.
+        misrepresent a stale reading as current. Not every device reports every
+        measurement either -- one that never sends a battery level should show
+        an unavailable entity rather than an indefinitely unknown one.
         """
-        return super().available and not self.coordinator.live_stale
+        return (
+            super().available
+            and not self.coordinator.live_stale
+            and self._live_key in self.coordinator.live
+        )
 
     @property
     def native_value(self) -> float | None:

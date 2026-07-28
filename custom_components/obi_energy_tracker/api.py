@@ -101,6 +101,40 @@ def _extract_live_fields(message: Any) -> dict[str, float]:
     return found
 
 
+def _numeric_keys(message: Any) -> set[str]:
+    """Every key in a frame carrying a plain number.
+
+    Used only for diagnostics: when a device reports a measurement under a name
+    this client does not know, the name shows up here and can be added, rather
+    than the value silently going missing.
+    """
+    keys: set[str] = set()
+    pending: list[Any] = [message]
+
+    while pending:
+        node = pending.pop()
+
+        if isinstance(node, str):
+            stripped = node.lstrip()
+            if not stripped.startswith(("{", "[")):
+                continue
+            try:
+                node = json.loads(stripped)
+            except ValueError:
+                continue
+
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    keys.add(key)
+                else:
+                    pending.append(value)
+        elif isinstance(node, list):
+            pending.extend(node)
+
+    return keys
+
+
 class ObiEnergyTrackerAPI:
     """API client for Obi EnergyTracker."""
 
@@ -121,6 +155,8 @@ class ObiEnergyTrackerAPI:
         self.token: str | None = None
         self._token_obtained_at: datetime | None = None
         self._live_frames_logged = 0
+        self._live_seen: set[frozenset[str]] = set()
+        self._live_unknown_keys: set[str] = set()
         self.bridge_id = bridge_id
         self.device_id = device_id
 
@@ -443,6 +479,34 @@ class ObiEnergyTrackerAPI:
 
                 for message in _iter_json_objects(frame.data):
                     measurements = _extract_live_fields(message)
+
+                    # Devices differ in what they report and how often. Logging
+                    # only the opening frames would miss a measurement that
+                    # arrives on a slower cycle than power, so log the first
+                    # frame to carry each new combination as well.
+                    combination = frozenset(measurements)
+                    if combination and combination not in self._live_seen:
+                        self._live_seen.add(combination)
+                        _LOGGER.debug(
+                            "Live frame carrying %s: %s",
+                            sorted(combination) or "nothing",
+                            frame.data,
+                        )
+
+                    # Names this client does not know are the likeliest reason a
+                    # measurement never shows up, so report them once.
+                    unknown = {
+                        key
+                        for key in _numeric_keys(message)
+                        if key.lower() not in _LIVE_FIELDS
+                    } - self._live_unknown_keys
+                    if unknown:
+                        self._live_unknown_keys |= unknown
+                        _LOGGER.debug(
+                            "Live frame has unrecognised numeric fields: %s",
+                            sorted(unknown),
+                        )
+
                     if measurements:
                         yield measurements
                     elif self._live_frames_logged <= _LIVE_FRAMES_TO_LOG:
