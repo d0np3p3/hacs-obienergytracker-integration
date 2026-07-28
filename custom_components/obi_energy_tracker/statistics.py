@@ -44,6 +44,16 @@ try:  # pragma: no cover - depends on the running core version
 except ImportError:  # pragma: no cover - cores before the rename
     _MEAN_FIELDS = {"has_mean": False}
 
+# Statistics metadata must name the unit class it converts within. Omitting it
+# is deprecated and stops working in core 2026.11, but the field does not exist
+# on older cores, so it is only sent where it is understood.
+try:  # pragma: no cover - depends on the running core version
+    from homeassistant.util.unit_conversion import EnergyConverter
+
+    _UNIT_CLASS: dict[str, Any] = {"unit_class": EnergyConverter.UNIT_CLASS}
+except (ImportError, AttributeError):  # pragma: no cover - older cores
+    _UNIT_CLASS = {}
+
 
 def _parse_timestamp(raw: Any) -> datetime | None:
     """Parse an API timestamp into an aware UTC datetime."""
@@ -201,6 +211,7 @@ async def async_backfill_statistics(
         "statistic_id": STATISTIC_ID_METER,
         "unit_of_measurement": METER_UNIT,
         **_MEAN_FIELDS,
+        **_UNIT_CLASS,
     }
 
     async_add_external_statistics(hass, metadata, statistics)

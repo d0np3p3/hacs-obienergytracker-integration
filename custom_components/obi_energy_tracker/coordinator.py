@@ -60,6 +60,27 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.live_mode = False
         self._live_task: asyncio.Task[None] | None = None
         self._live_stop = asyncio.Event()
+        self._backfill_task: asyncio.Task[None] | None = None
+
+    def _schedule_backfill(self) -> None:
+        """Run the statistics backfill outside the update cycle."""
+        if self._backfill_task is not None and not self._backfill_task.done():
+            # Still working through a long gap; a second pass would re-request
+            # the same windows.
+            return
+
+        self._backfill_task = self.config_entry.async_create_background_task(
+            self.hass, self._async_backfill(), f"{DOMAIN}_backfill"
+        )
+
+    async def _async_backfill(self) -> None:
+        """Import missing statistics, keeping failures away from the sensor."""
+        try:
+            await async_backfill_statistics(self.hass, self.api)
+        except asyncio.CancelledError:
+            raise
+        except (OSError, ClientError) as err:
+            _LOGGER.warning("Could not backfill meter statistics: %s", err)
 
     @property
     def live_stale(self) -> bool:
@@ -79,14 +100,16 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
     async def async_stop_live(self) -> None:
-        """Stop the live consumer and restore the normal upload interval."""
+        """Stop background work and restore the normal upload interval."""
         self._live_stop.set()
 
-        if self._live_task is not None:
-            self._live_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._live_task
-            self._live_task = None
+        for task in (self._live_task, self._backfill_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        self._live_task = None
+        self._backfill_task = None
 
         if self.live_mode:
             await self.api.async_set_upload_interval(UPLOAD_INTERVAL_NORMAL)
@@ -174,12 +197,11 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.error("Failed to update data: %s", err)
             raise UpdateFailed(f"Failed to update data: {err}") from err
 
-        # Replay anything the recorder missed while polling was failing. A
-        # backfill problem must not take the live reading down with it.
-        try:
-            await async_backfill_statistics(self.hass, self.api)
-        except (OSError, ClientError) as err:
-            _LOGGER.warning("Could not backfill meter statistics: %s", err)
+        # Replay anything the recorder missed while polling was failing. This
+        # runs detached: closing a month-long gap costs dozens of requests, and
+        # awaiting it here held config entry setup for half a minute on the
+        # first refresh.
+        self._schedule_backfill()
 
         return {
             "hourly": hourly_data,
