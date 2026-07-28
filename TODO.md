@@ -2,7 +2,7 @@
 
 ## Stabilität
 - [x] Hourly 400 Fehler nur noch als DEBUG loggen
-- [ ] Hourly endpoint optional behandeln
+- [x] Hourly endpoint nicht mehr pro Refresh abgefragt (war ungenutzt)
 - [x] Retry/Backoff für API Requests
 - [x] Bessere Exception-Behandlung
 - [x] Token-Refresh (war: Token lief nach ~1h ab, alle Calls still auf None)

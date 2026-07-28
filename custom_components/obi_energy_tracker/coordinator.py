@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import logging
 from typing import Any
 
@@ -28,7 +28,6 @@ from .statistics import async_backfill_statistics
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(minutes=5)
-DAYS_OF_HISTORY = 7
 
 
 class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -168,26 +167,13 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             meter = await self.api.async_get_meter_data(hours=LIVE_METER_HOURS)
             _LOGGER.debug("Meter data: %s", meter)
 
-            end_date = datetime.now(timezone.utc)
-            hourly_data = await self.api.async_get_hourly_data(
-                start_date=end_date,
-                num_days=DAYS_OF_HISTORY,
-            )
-
-            _LOGGER.debug(
-                "Hourly data fetched: %s",
-                "available" if hourly_data else "none",
-            )
-
             latest_meter = self._extract_latest_meter(meter)
             if latest_meter is not None:
                 self._last_meter_value = latest_meter["value"]
                 self._last_meter_time = latest_meter["time"]
 
-            _LOGGER.info(
-                "Successfully fetched data: meter=%s, hourly_days=%d",
-                "available" if meter else "none",
-                DAYS_OF_HISTORY,
+            _LOGGER.debug(
+                "Fetched meter data: %s", "available" if meter else "none"
             )
 
         # aiohttp raises ClientError, which is not an OSError, so catching only
@@ -204,7 +190,6 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._schedule_backfill()
 
         return {
-            "hourly": hourly_data,
             "meter": meter,
             "last_meter_value": self._last_meter_value,
             "last_meter_time": self._last_meter_time,
