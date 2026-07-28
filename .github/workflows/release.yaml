@@ -82,7 +82,11 @@ jobs:
         uses: hacs/action@d556e736723344f83838d08488c983a15381059a # 22.5.0
         with:
           category: integration
-          ignore: brands
+          # brands and topics are requirements for listing in the HACS default
+          # store, not for installing from this repository. Gating a release on
+          # them would block publishing working code over repository metadata.
+          # Drop the ignores if this is ever submitted to the default store.
+          ignore: brands topics
 
   release:
     name: Publish release
