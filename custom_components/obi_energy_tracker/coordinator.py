@@ -18,6 +18,7 @@ from .const import (
     DOMAIN,
     LIVE_METER_HOURS,
     LIVE_RECONNECT_DELAY,
+    LIVE_RECONNECT_MAX,
     LIVE_STALE_AFTER,
     UPLOAD_INTERVAL_LIVE,
     UPLOAD_INTERVAL_NORMAL,
@@ -104,11 +105,16 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def _async_live_loop(self) -> None:
         """Hold the websocket open, reconnecting until asked to stop."""
+        delay = LIVE_RECONNECT_DELAY
+
         while not self._live_stop.is_set():
+            received = False
+
             try:
                 async for measurements in self.api.async_live_messages():
                     if self._live_stop.is_set():
                         break
+                    received = True
                     self.live.update(measurements)
                     self.live_last_message = dt_util.utcnow()
                     self.async_update_listeners()
@@ -122,11 +128,16 @@ class ObiEnergyTrackerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if self._live_stop.is_set():
                 break
 
+            if received:
+                # The socket works; treat this as an ordinary drop.
+                delay = LIVE_RECONNECT_DELAY
+            else:
+                delay = min(delay * 2, LIVE_RECONNECT_MAX)
+                _LOGGER.debug("No live frames received, retrying in %ds", delay)
+
             # Wait before reconnecting, but wake immediately on shutdown.
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(
-                    self._live_stop.wait(), timeout=LIVE_RECONNECT_DELAY
-                )
+                await asyncio.wait_for(self._live_stop.wait(), timeout=delay)
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API endpoint."""

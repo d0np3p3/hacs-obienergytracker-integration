@@ -27,7 +27,11 @@ UPLOAD_INTERVAL_LIVE = 2
 UPLOAD_INTERVAL_NORMAL = 300
 # Seconds without a message before the socket is considered dead.
 LIVE_STALE_AFTER = 90
+# Reconnect delay, doubled while the socket keeps failing and reset as soon as a
+# frame arrives. Without the ceiling a permanently refused socket -- a protocol
+# change, a blocked host -- would retry every ten seconds forever.
 LIVE_RECONNECT_DELAY = 10
+LIVE_RECONNECT_MAX = 300
 
 # Long-term statistics
 #
